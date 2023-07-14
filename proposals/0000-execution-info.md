@@ -1299,28 +1299,13 @@ impl<C> PatternMatch<InstructionPattern<C>> for Instruction<C> {
 ```
 </details>
 
-<!-- Explain the change or feature as you would to another builder in the ecosystem.
-
-Describe the syntax and semantics of any new feature. Any new terminology or new named concepts should be defined in this section.
-
-Explain the design in sufficient detail for somebody familiar blockchain to understand. Consider:
-
-- Its interaction with other features
-- Corner cases are dissected by example
-
-Provide some examples of how it will be used. -->
-
 ## Security considerations
 
-<!-- + Re-entrancy -->
-
-<!-- The purpose of this section is both to encourage authors to consider security in their designs and to inform the reader of relevant security issues.
-
-Discuss here security implications/considerations relevant to the proposed change. Go through detected threats and risks and how they affected security-relevant design decisions. Add any kind of security concerns that are worth discussing during the process of this RFC. -->
+There are no security risks related to the new instructions from the XCVM perspective.
 
 ## Impact
 
-The impact of this proposal is Low. It introduces a new instruction, so XCVM implementations have to be updated.
+The impact of this proposal is Low. It introduces new instructions, so XCVM implementations have to be updated.
 
 ## Alternatives
 
