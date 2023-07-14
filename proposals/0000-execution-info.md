@@ -13,11 +13,22 @@ Replaces:
 
 ## Summary
 
-<!-- + Scope -->
+This RFC proposes several enhancements to XCM:
+* a sender chain will be able to compute the correct weight of an XCM program to be executed on a target chain.
+* a sender chain will be able to convert the computed weight to a currency suitable to pay fees on the target chain.
+* a sender chain will be able to check if the XCM program will exceed the max weight on the target chain, preventing its sending in this case.
 
 ## Motivation
 
-<!-- + Problem Statement -->
+When sending an XCM program, the sender chain can't know beforehand the correct weight of the XCM program. And also, it can't know the currencies in which it can pay the fees and can't know the right amount of a suitable currency to execute the program.
+This leads to guessing: either the sender chain itself sets an arbitrary weight limit and fees in the `BuyExecution` command, or the user initiating the sending of an XCM program is forced to guess the correct values.
+
+This is generally okay for transferring fungible assets. However, it can become an issue in the following scenarios:
+* Transferring multiple currencies - one must choose one currency to pay execution fees. However, the amount of the selected currency could be small (i.e., the guess could be wrong), leading to trapping all the assets.
+* Transferring NFTs - the same situation as with multiple currencies. One must choose a currency to pay fees since it is impossible to pay fees by an NFT.
+* General interoperability - since the sender chain can't know the exact weight of an XCM program and can't set the correct execution fees, creating a **reliable and convenient-to-use** cross-chain logic such as NFT metadata synchronization is impossible. E.g., one chain could provide access control logic for an NFT's attributes, and the other stores the NFT. Or there can be even more complex cross-chain logic not related to NFTs. The main obstacle here is guessing the correct weight/fee values.
+
+This RFC proposes a possible way to solve this via new instructions and a new notion of an instruction pattern.
 
 ## Specification
 
