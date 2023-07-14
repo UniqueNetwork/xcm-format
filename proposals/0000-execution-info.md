@@ -1324,10 +1324,19 @@ The impact of this proposal is Low. It introduces a new instruction, so XCVM imp
 
 ## Alternatives
 
-### Non-refundable constant weight
+### Constant weight
 
-### Refundable constant weight
+The response chain could advertise the max XCM weight and payment methods only, and the subscriber chain could always overestimate the weight of all the programs and force the user to always pay the maximum fees on the response chain, ensuring the XCM program execution.
+The obvious drawback of this solution is that the user must almost always pay more than needed.
+All the assets left after the `BuyExecution` could be deposited back to the user. Yet, the user must possess the max amount of fees to initiate the execution, even if it turns out to be cheap.
 
-### Querying the weight/fee info for each program
+### Querying the weight info for each program
+
+The subscriber chain could query the weight of a program from the response chain before sending the program to actual execution. However, weighing and sending the answer back must also be covered by fees. Yet these fees could be predefined, and the subscriber chain could charge the sender user to pay these extra fees.
+Nonetheless, this induces an additional round-trip for each XCM message, slowing the inter-chain communication down and wasting the corresponding XCMP/HRMP channel capacity.
 
 ### Advertising the XCM Weigher code
+
+The response chain could advertise the Weigher code so the subscriber chain could weigh any XCM program correctly. The code could be a simple formula or a complex branching program.
+However, this implies we have to agree on the Weigher code encoding, which seems to be a somewhat complex task. Especially considering that XCM is meant to be used not only by the Dotsama ecosystem.
+Also, those Weigher programs must execute in some sandbox since those programs are inherently untrusted because it is a code received from an outside world. This could induce extra complexity to implement such a mechanism.
