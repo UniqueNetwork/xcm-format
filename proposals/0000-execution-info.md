@@ -45,8 +45,8 @@ The specification uses the following terms:
     * an `AssetId` identifies a currency in which it is possible to pay fees
     * a formula to convert a program weight to fee in the corresponding currency
     ```rust
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-    enum PaymentMethod {
+    #[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    struct PaymentMethod {
         asset_id: AssetId,
         fee_polynomial: FeePolynomial<u128>,
     }
@@ -56,7 +56,7 @@ The specification uses the following terms:
     See [the corresponding section](#instruction-pattern) for details.
 6. **Instruction pattern report** results from weighing a particular **instruction pattern** on the **response chain**. The pattern is identified by its hash. The pattern could be either valid or invalid. If it is valid, the result will carry the pattern's weight. If it is invalid, the result will carry an XCM error. 
     ```rust
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
     struct PatternReport {
         hash: XcmHash,
         result: Result<Weight, XcmError>,
@@ -82,13 +82,13 @@ Since we can use patterns on both sides to know the correct weight of an XCM pro
 ```rust
 // Note: to disambiguate patterns, all lists (such as a vector inside the `MultiAssetsPattern`) must be sorted.
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Specificity<T> {
     Definite(T), // The order matters. The most specific variant must be before the less specific.
     Any,
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum InstructionPattern<Call> {
     WithdrawAsset(Specificity<MultiAssetsPattern>),
     ReserveAssetDeposited(Specificity<MultiAssetsPattern>),
@@ -127,7 +127,11 @@ enum InstructionPattern<Call> {
 
     // `DescendOrigin` arguments shouldn't affect its weight
     DescendOrigin,
-    ReportError(Specificity<QueryResponseInfoPattern>),
+
+    // `query_id` shouldn't affect the weight
+    // `max_weight` shouldn't affect the weight
+    ReportError(Specificity<MultiLocationPattern>),
+
     DepositAsset {
         assets: MultiAssetFilterPattern,
         beneficiary: Specificity<MultiLocationPattern>
@@ -152,12 +156,16 @@ enum InstructionPattern<Call> {
         dest: Specificity<MultiLocationPattern>,
         xcm: Specificity<XcmPattern<()>>
     },
+
+    // `query_id` shouldn't affect the weight
+    // `max_weight` shouldn't affect the weight
     ReportHolding {
-        response_info: Specificity<QueryResponseInfoPattern>,
+        response_dest: Specificity<MultiLocationPattern>,
         assets: MultiAssetFilterPattern
     },
+    
     BuyExecution {
-        fees: Specificity<MultiAsset>
+        fees: Specificity<MultiAssetPattern>
         // `weight_limit` shouldn't affect the weight of `BuyExecution`
     },
     RefundSurplus,
@@ -168,6 +176,8 @@ enum InstructionPattern<Call> {
         assets: Specificity<MultiAssetsPattern>,
         ticket: Specificity<MultiLocationPattern>
     },
+    
+    // `Trap` arguments shouldn't affect its weight
     Trap,
     
     // `SubscribeVersion` arguments shouldn't affect its weight
@@ -185,23 +195,32 @@ enum InstructionPattern<Call> {
 
     // `ExpectTransactStatus` arguments shouldn't affect its weight
     ExpectTransactStatus,
+
     QueryPallet {
-        module_name: NameMaxLen,
-        response_info: Specificity<QueryResponseInfoPattern>
+        // Since the `MaxPalletNameLen` is defined, we can always know
+        // the weight upper bound for this instruction regardless the `module_name`
+
+        // `query_id` shouldn't affect the weight
+        // `max_weight` shouldn't affect the weight
+        response_dest: Specificity<MultiLocationPattern>
     },
-    ExpectPallet {
-        name: NameMaxLen,
-        module_name: NameMaxLen,
-        // the rest shouldn't affect the `ExpectPallet` weight
-    },
-    ReportTransactStatus(Specificity<QueryResponseInfoPattern>),
+
+    // Since the `MaxPalletNameLen` is defined, we can always know
+    // the weight upper bound for this instruction regardless of its arguments
+    ExpectPallet,
+
+    // `query_id` shouldn't affect the weight
+    // `max_weight` shouldn't affect the weight
+    ReportTransactStatus(Specificity<MultiLocationPattern>),
+
     ClearTransactStatus,
 
     // `UniversalOrigin` arguments shouldn't affect its weight
     UniversalOrigin,
+
     ExportMessage {
         network: Specificity<NetworkId>,
-        destination: Specificity<InteriorMultiLocation>,
+        destination: Specificity<JunctionsPattern>,
         xcm: Specificity<XcmPattern<()>>
     },
     LockAsset {
@@ -221,10 +240,10 @@ enum InstructionPattern<Call> {
         locker: Specificity<MultiLocationPattern>
     },
  
-    SetFeesMode([u8; 32]),
+    // `SetFeesMode` arguments shouldn't affect its weight
+    SetFeesMode,
 
-    // `SetTopic` arguments shouldn't affect its weight
-    SetTopic,
+    SetTopic([u8; 32]),
 
     ClearTopic,
 
@@ -244,27 +263,12 @@ enum InstructionPattern<Call> {
     UnsubscribeExecutionInfo,
 }
 
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct XcmPattern<Call>(pub Vec<InstructionPattern<Call>>);
-
-impl Ord for XcmPattern {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.0.len().cmp(&other.0.len()) {
-            Ordering::Equal => self.0.partial_cmp(&other.0).unwrap(),
-            ordering => ordering,
-        }
-    }
-}
-
-impl PartialOrd for XcmPattern {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
 
 pub type JunctionPattern = Specificity<Junction>;
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum JunctionsPattern {
         Here,
         X1(JunctionPattern),
@@ -277,7 +281,7 @@ pub enum JunctionsPattern {
         X8(JunctionPattern, JunctionPattern, JunctionPattern, JunctionPattern, JunctionPattern, JunctionPattern, JunctionPattern, JunctionPattern),
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MultiLocationPattern {
     // The order matters. The most specific variant must be before the less specific.
     Full {
@@ -288,19 +292,19 @@ pub enum MultiLocationPattern {
     Junctions(JunctionsPattern),
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AssetIdPattern {
     Concrete(MultiLocationPattern),
     Abstract([u8; 32]),
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FungibilityPattern {
     Fungible(Specificity<u128>),
     NonFungible(Specificity<AssetInstance>),
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MultiAssetPattern {
     // The order matters. The most specific variant must be before the less specific.
     Full {
@@ -311,25 +315,10 @@ pub enum MultiAssetPattern {
     Fun(FungibilityPattern),
 }
 
-#[derive(Hash, PartialEq, Eq)]
-pub struct MultiAssetsPattern(Vec<Specificity<MultiAssetPattern>>);
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MultiAssetsPattern(pub Vec<Specificity<MultiAssetPattern>>);
 
-impl Ord for MultiAssetsPattern {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self.0.len().cmp(&other.0.len()) {
-            Ordering::Equal => self.0.partial_cmp(&other.0).unwrap(),
-            ordering => ordering,
-        }
-    }
-}
-
-impl PartialOrd for MultiAssetsPattern {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WildMultiAssetPattern {
     // The order matters. The most specific variant must be before the less specific.
     AllOfCounted {
@@ -345,14 +334,14 @@ pub enum WildMultiAssetPattern {
     All,
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MultiAssetFilterPattern {
     // The order matters. The most specific variant must be before the less specific.
     Collection(MultiAssetsPattern),
     Wild(WildMultiAssetPattern)
 }
 
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResponsePattern {
     Null,
     Assets(MultiAssetsPattern),
@@ -363,7 +352,10 @@ pub enum ResponsePattern {
     // `Version` argument shouldn't affect the weight
     Version,
 
-    PalletsInfo(Specificity<BoundedVec<PalletNamePattern, MaxPalletsInfo>>),
+    // Since the `MaxPalletNameLen` is defined, we can always know
+    // the weight upper bound for this response regardless of actual pallet info.
+    // We only need the number of received `PalletInfo` objects.
+    PalletsInfo(u32),
 
     // `DispatchResult` argument shouldn't affect the weight
     DispatchResult,
@@ -374,22 +366,6 @@ pub enum ResponsePattern {
         // `max_weight` shouldn't affect the weight
         pattern_reports: Option<Vec<Specificity<PatternReport>>>,
     },
-}
-
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct QueryResponseInfoPattern {
-    destination: MultiLocationPattern,
-    // `query_id` shouldn't affect the weight
-    // `max_weight` shouldn't affect the weight
-}
-
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NameMaxLen(u32);
-
-#[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PalletNamePattern {
-    name_max_len: NameMaxLen,
-    module_name_max_len: NameMaxLen,
 }
 ```
 
@@ -402,9 +378,7 @@ It helps the subscriber chain Weigher to find the correct instruction patterns f
 pub enum InstructionId {
     WithdrawAsset,
     ReserveAssetDeposited,
-    ReceiveTeleportedAsset,
     // ... snip ...
-    ClearTopic,
     AliasOrigin,
 }
 
@@ -450,8 +424,8 @@ enum Response {
 * The `payment_methods` field can contain an update of payment methods.
 A payment method identifies a currency in which one can pay fees for execution on the response chain. Also, it contains a polynomial formula to convert XCM weight into the corresponding currency.
     ```rust
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
-    enum PaymentMethod {
+    #[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    struct PaymentMethod {
         asset_id: AssetId,
         fee_polynomial: FeePolynomial<u128>,
     }
@@ -463,7 +437,7 @@ A payment method identifies a currency in which one can pay fees for execution o
 * The `pattern_reports` field can contain an update of some pattern reports. Unlike payment methods, this list includes updates only for specified items (i.e., the reports not specified in this list will not be updated/removed).<br/>
 A pattern report identifies the corresponding instruction pattern by its hash (the `hash` field) and contains the result of weighing the instruction pattern in the `result` field.
     ```rust
-    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
     struct PatternReport {
         hash: XcmHash,
         result: Result<Weight, XcmError>,
@@ -499,31 +473,33 @@ The conversion function should convert an instruction to a pattern with the same
 ```rust
 fn inst_to_pattern<Call>(inst: &Instruction<Call>) -> InstructionPattern<Call> {
     match inst {
-        WithdrawAsset(assets) => {
+        Instruction::WithdrawAsset(assets) => {
             InstructionPattern::WithdrawAsset(
-                Specificity::Definite(vec![Specificity::Any; assets.len()])
+                Specificity::Definite(MultiAssetsPattern(vec![Specificity::Any; assets.0.len()]))
             )
         },
-        ReserveAssetDeposited(assets) => {
+        Instruction::ReserveAssetDeposited(assets) => {
             InstructionPattern::ReserveAssetDeposited(
-                Specificity::Definite(vec![Specificity::Any; assets.len()])
+                Specificity::Definite(MultiAssetsPattern(vec![Specificity::Any; assets.0.len()]))
             )
         },
-        ReceiveTeleportedAsset(assets) => {
-            InstructionPattern::ReceiveTeleportedAsset(
-                Specificity::Definite(vec![Specificity::Any; assets.len()])
-            )
+        Instruction::ReceiveTeleportedAsset(assets) => {
+            InstructionPattern::ReceiveTeleportedAsset(Specificity::Any)
         },
-        QueryResponse { .. } => {
-            InstructionPattern::QueryResponse {
-                query_id: Specificity::Any,
-                response: Specificity::Any,
-                max_weight: Specificity::Any,
-                querier: None,
+        // ... snip ...
+        Instruction::ClearOrigin => InstructionPattern::ClearOrigin,
+        // ... snip ...
+        Instruction::DepositAsset {
+            assets: MultiAssetFilter::Wild(WildMultiAsset::AllCounted(count)),
+            ..
+        } => {
+            InstructionPattern::DepositAsset {
+                assets: MultiAssetFilterPattern::Wild(WildMultiAssetPattern::AllCounted(*count)),
+                beneficiary: Specificity::Any
             }
         },
         // ... snip ...
-        ReportError(_) => InstructionPattern::ReportError(Specificity::Any),
+        Instruction::BuyExecution { .. } => InstructionPattern::BuyExecution { fees: Specificity::Any },
         // ... snip ...
     }
 }
@@ -536,21 +512,27 @@ fn weigh_inst_pattern<Call>(pattern: InstructionPattern<Call>) -> Result<Weight,
     match pattern {
         InstructionPattern::WithdrawAsset(assets) => match assets {
             Specificity::Definite(assets) => {
-                Ok(WITHDRAW_ASSET_WEIGHT.saturating_mul(assets.len() as u64))
+                Ok(WITHDRAW_ASSET_WEIGHT.saturating_mul(assets.0.len() as u64))
             },
             Specificity::Any => Ok(Weight::MAX) /* Could be some reasonable upper bound */,
         },
         InstructionPattern::ReserveAssetDeposited(assets) => match assets {
             Specificity::Definite(assets) => {
-                Ok(RESERVE_ASSET_DEPOSITED_WEIGHT.saturating_mul(assets.len() as u64))
+                Ok(RESERVE_ASSET_DEPOSITED_WEIGHT.saturating_mul(assets.0.len() as u64))
             },
             Specificity::Any => Ok(Weight::MAX) /* Could be some reasonable upper bound */,
         },
         InstructionPattern::ReceiveTeleportedAsset(assets) => Err(XcmError::Unimplemented) /* the response chain doesn't trust anyone */,
-        InstructionPattern::QueryResponse { .. } => QUERY_RESPONSE_WEIGHT,
         // ... snip ...
-        InstructionPattern::ReportError(_) => REPORT_ERROR_WEIGHT,
+        InstructionPattern::ClearOrigin => Ok(CLEAR_ORIGIN_WEIGHT),
         // ... snip ...
+        InstructionPattern::DepositAsset {
+            assets: MultiAssetFilterPattern::Wild(WildMultiAssetPattern::AllCounted(count)),
+            ..
+        } => Ok(DEPOSIT_ASSET_WEIGHT.saturating_mul(count as u64)),
+        // ... snip ...
+        InstructionPattern::BuyExecution { .. } => Ok(BUY_EXECUTION_WEIGHT),
+        // ...  snip ...
     }
 }
 
@@ -584,15 +566,15 @@ Here is how the subscriber chain could store the weight info and use it to weigh
 ```rust
 #[pallet::storage]
 pub type XcmMaxWeight<T: Config> = StorageMap<
-    Hasher = Twox64Concat,
+    Hasher = /* <hasher> */,
     Key = MultiLocation, // MultiLocation of a response chain
-    Key = Weight,
+    Value = Weight,
     QueryKind = ValueQuery
 >;
 
 #[pallet::storage]
 pub type XcmPatternWeight<T: Config> = StorageDoubleMap<
-    Hasher1 = Twox64Concat,
+    Hasher1 = /* <hasher> */,
     Key1 = MultiLocation, // MultiLocation of a response chain
     Hasher2 = Identity,
     Key2 = XcmHash,
@@ -602,7 +584,7 @@ pub type XcmPatternWeight<T: Config> = StorageDoubleMap<
 
 #[pallet::storage]
 pub type XcmInstructionPatterns<T: Config> = StorageMap<
-    Hasher = Twox64Concat,
+    Hasher = /* <hasher> */,
     Key = InstructionId, // See the definition in the "InstructionId" section
     Value = Vec<(InstructionPattern<T::RuntimeCall>, XcmHash)>,
     QueryKind = OptionQuery 
@@ -614,15 +596,21 @@ In the `XcmInstructionPatterns` storage, the subscriber chain stores all the ins
 KEY   = InstructionId::WithdrawAsset
 VALUE = vec![
     (
-        WithdrawAsset(Specificity::Definite(vec![Specificity::Any; 1])),
+        WithdrawAsset(Specificity::Definite(
+            MultiAssetsPattern(vec![Specificity::Any; 1])
+        )),
         {pattern-hash}
     ),
     (
-        WithdrawAsset(Specificity::Definite(vec![Specificity::Any; 2])),
+        WithdrawAsset(Specificity::Definite(
+            MultiAssetsPattern(vec![Specificity::Any; 2])
+        )),
         {pattern-hash}
     ),
     (
-        WithdrawAsset(Specificity::Definite(vec![Specificity::Any; 3])),
+        WithdrawAsset(Specificity::Definite(
+            MultiAssetsPattern(vec![Specificity::Any; 3])
+        )),
         {pattern-hash}
     ),
 ]
@@ -631,9 +619,9 @@ It is crucial to store patterns for any given instruction ID in the correct orde
 
 Here is a possible implementation of the subscriber chain's Weigher:
 ```rust
-fn weigh_foreign_inst(target_chain: &MultiLocation, inst: &Instruction<()>) -> Result<Weight, XcmError> {
+fn weigh_foreign_inst<T: Config>(target_chain: &MultiLocation, inst: &Instruction<()>) -> Result<Weight, XcmError> {
     let inst_id = inst.id(); // See the definition in the "InstructionId" section
-    let inst_patterns = <XcmInstructionPatterns<T>>::get(inst_id)
+    let inst_patterns = <XcmInstructionPatterns<T>>::get(&inst_id)
         .ok_or(XcmError::Unimplemented)?;
 
     for (pattern, pattern_hash) in inst_patterns.iter() {
@@ -648,9 +636,9 @@ fn weigh_foreign_inst(target_chain: &MultiLocation, inst: &Instruction<()>) -> R
     Err(XcmError::WeightNotComputable)
 }
 
-fn weigh_foreign_program(target_chain: &MultiLocation, xcm: &Xcm<()>) -> Result<Weight, XcmError> {
+fn weigh_foreign_program<T: Config>(target_chain: &MultiLocation, xcm: &Xcm<()>) -> Result<Weight, XcmError> {
     let program_weight = xcm.0.iter().try_fold(Weight::zero(), |acc, inst| {
-        let pattern_weight = weigh_foreign_inst(target_chain, inst)?;
+        let pattern_weight = weigh_foreign_inst::<T>(target_chain, inst)?;
         Ok(acc.saturating_add(pattern_weight))
     })?;
 
@@ -673,9 +661,15 @@ SubscribeExecutionInfo {
     query_id: <subscription-query-id>,
     max_response_weight: <max-weight>,
     patterns: vec![
-        WithdrawAsset(Specificity::Definite(vec![Specificity::Any; 1])),
-        WithdrawAsset(Specificity::Definite(vec![Specificity::Any; 2])),
-        WithdrawAsset(Specificity::Definite(vec![Specificity::Any; 3])),
+        WithdrawAsset(Specificity::Definite(
+            MultiAssetsPattern(vec![Specificity::Any; 1])
+        )),
+        WithdrawAsset(Specificity::Definite(
+            MultiAssetsPattern(vec![Specificity::Any; 2])
+        )),
+        WithdrawAsset(Specificity::Definite(
+            MultiAssetsPattern(vec![Specificity::Any; 3])
+        )),
 
         ClearOrigin,
 
@@ -830,8 +824,8 @@ pub trait PatternMatch<P> {
     fn matches(&self, pattern: &P) -> bool;
 }
 
-impl<T: PatternMatch<T>> PatternMatch<Specificity<T>> for T {
-    fn matches(&self, pattern: &Specificity<T>) -> bool {
+impl<P, T: PatternMatch<P>> PatternMatch<Specificity<P>> for T {
+    fn matches(&self, pattern: &Specificity<P>) -> bool {
         match pattern {
             Specificity::Definite(p) => self.matches(p),
             Specificity::Any => true,
@@ -839,8 +833,8 @@ impl<T: PatternMatch<T>> PatternMatch<Specificity<T>> for T {
     }
 }
 
-impl<T: PatternMatch<T>> PatternMatch<Vec<T>> for Vec<T> {
-    fn matches(&self, pattern: &Vec<T>) -> bool {
+impl<P, T: PatternMatch<P>> PatternMatch<Vec<P>> for Vec<T> {
+    fn matches(&self, pattern: &Vec<P>) -> bool {
         if self.len() == pattern.len() {
             self.iter().zip(pattern.iter()).all(|(item, pattern)| item.matches(pattern))
         } else {
@@ -849,8 +843,8 @@ impl<T: PatternMatch<T>> PatternMatch<Vec<T>> for Vec<T> {
     }
 }
 
-impl<T: PatternMatch<T>> PatternMatch<Option<T>> for Option<T> {
-    fn matches(&self, pattern: &Option<T>) -> bool {
+impl<P, T: PatternMatch<P>> PatternMatch<Option<P>> for Option<T> {
+    fn matches(&self, pattern: &Option<P>) -> bool {
         match (self, pattern) {
             (Some(v), Some(p)) => v.matches(p),
             (None, None) => true,
@@ -860,51 +854,57 @@ impl<T: PatternMatch<T>> PatternMatch<Option<T>> for Option<T> {
 }
 
 macro_rules! impl_eq_pattern {
-    ($ty:ty) => {
-        impl PatternMatch<$ty> for $ty {
-            fn matches(&self, pattern: &$ty) -> bool {
-                self == pattern
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl PatternMatch<$ty> for $ty {
+                fn matches(&self, pattern: &$ty) -> bool {
+                    self == pattern
+                }
             }
-        }
+        )*
     };
 }
 
-impl_eq_pattern![Junction];
-impl_eq_pattern![Weight];
-impl_eq_pattern![PaymentMethod];
-impl_eq_pattern![PatternReport];
-impl_eq_pattern![u128];
-impl_eq_pattern![AssetInstance];
-impl_eq_pattern![OriginKind];
-impl_eq_pattern![bool];
-impl_eq_pattern![Option<(u32, Error)>];
-impl_eq_pattern![MaybeErrorCode];
+impl_eq_pattern! {
+    Junction,
+    WildFungibility,
+    NetworkId,
+    Weight,
+    PaymentMethod,
+    PatternReport,
+    u128,
+    AssetInstance,
+    OriginKind,
+    bool,
+    Option<(u32, Error)>,
+    MaybeErrorCode,
+}
 
 impl PatternMatch<JunctionsPattern> for Junctions {
     fn matches(&self, pattern: &JunctionsPattern) -> bool {
         match (self, pattern) {
-            (Juncions::Here, JunctionsPattern::Here) => true,
-            (Juncions::X1(j1), JunctionsPattern::X1(p1)) => j1.matches(p1),
-            (Juncions::X2(j1, j2), JunctionsPattern::X2(p1, p2)) => {
+            (Junctions::Here, JunctionsPattern::Here) => true,
+            (Junctions::X1(j1), JunctionsPattern::X1(p1)) => j1.matches(p1),
+            (Junctions::X2(j1, j2), JunctionsPattern::X2(p1, p2)) => {
                 j1.matches(p1) && j2.matches(p2)
             },
-            (Juncions::X3(j1, j2, j3), JunctionsPattern::X3(p1, p2, p3)) => {
+            (Junctions::X3(j1, j2, j3), JunctionsPattern::X3(p1, p2, p3)) => {
                 j1.matches(p1) && j2.matches(p2) && j3.matches(p3)
             },
-            (Juncions::X4(j1, j2, j3, j4), JunctionsPattern::X4(p1, p2, p3, p4)) => {
+            (Junctions::X4(j1, j2, j3, j4), JunctionsPattern::X4(p1, p2, p3, p4)) => {
                 j1.matches(p1)
                 && j2.matches(p2)
                 && j3.matches(p3)
                 && j4.matches(p4)
             },
-            (Juncions::X5(j1, j2, j3, j4, j5), JunctionsPattern::X5(p1, p2, p3, p4, p5)) => {
+            (Junctions::X5(j1, j2, j3, j4, j5), JunctionsPattern::X5(p1, p2, p3, p4, p5)) => {
                 j1.matches(p1)
                 && j2.matches(p2)
                 && j3.matches(p3)
                 && j4.matches(p4)
                 && j5.matches(p5)
             },
-            (Juncions::X6(j1, j2, j3, j4, j5, j6), JunctionsPattern::X6(p1, p2, p3, p4, p5, p6)) => {
+            (Junctions::X6(j1, j2, j3, j4, j5, j6), JunctionsPattern::X6(p1, p2, p3, p4, p5, p6)) => {
                 j1.matches(p1)
                 && j2.matches(p2)
                 && j3.matches(p3)
@@ -912,7 +912,7 @@ impl PatternMatch<JunctionsPattern> for Junctions {
                 && j5.matches(p5)
                 && j6.matches(p6)
             },
-            (Juncions::X6(j1, j2, j3, j4, j5, j6, j7), JunctionsPattern::X6(p1, p2, p3, p4, p5, p6, p7)) => {
+            (Junctions::X7(j1, j2, j3, j4, j5, j6, j7), JunctionsPattern::X7(p1, p2, p3, p4, p5, p6, p7)) => {
                 j1.matches(p1)
                 && j2.matches(p2)
                 && j3.matches(p3)
@@ -921,7 +921,7 @@ impl PatternMatch<JunctionsPattern> for Junctions {
                 && j6.matches(p6)
                 && j7.matches(p7)
             },
-            (Juncions::X6(j1, j2, j3, j4, j5, j6, j7, j8), JunctionsPattern::X6(p1, p2, p3, p4, p5, p6, p7, p8)) => {
+            (Junctions::X8(j1, j2, j3, j4, j5, j6, j7, j8), JunctionsPattern::X8(p1, p2, p3, p4, p5, p6, p7, p8)) => {
                 j1.matches(p1)
                 && j2.matches(p2)
                 && j3.matches(p3)
@@ -942,8 +942,8 @@ impl PatternMatch<MultiLocationPattern> for MultiLocation {
             MultiLocationPattern::Full {
                 parents,
                 interior
-            } => self.parents == parents && self.interior.matches(interior),
-            MultiLocationPattern::Parents(parents) => self.parents == parents,
+            } => self.parents == *parents && self.interior.matches(interior),
+            MultiLocationPattern::Parents(parents) => self.parents == *parents,
             MultiLocationPattern::Junctions(interior) => self.interior.matches(interior),
         }
     }
@@ -973,9 +973,9 @@ impl PatternMatch<MultiAssetPattern> for MultiAsset {
     fn matches(&self, pattern: &MultiAssetPattern) -> bool {
         match pattern {
             MultiAssetPattern::Full {
-                id,
-                fun,
-            } => self.id.matches(pattern) && self.fun.matches(pattern),
+                id: id_pat,
+                fun: fun_pat,
+            } => self.id.matches(id_pat) && self.fun.matches(fun_pat),
             MultiAssetPattern::Id(pattern) => self.id.matches(pattern),
             MultiAssetPattern::Fun(pattern) => self.fun.matches(pattern),
         }
@@ -985,7 +985,7 @@ impl PatternMatch<MultiAssetPattern> for MultiAsset {
 impl PatternMatch<MultiAssetsPattern> for MultiAssets {
     fn matches(&self, pattern: &MultiAssetsPattern) -> bool {
         if self.0.len() == pattern.0.len() {
-            self.0.iter().zip(pattern.iter()).all(|asset, pattern| asset.matches(pattern))
+            self.0.iter().zip(pattern.0.iter()).all(|(asset, pattern)| asset.matches(pattern))
         } else {
             false
         }
@@ -994,40 +994,37 @@ impl PatternMatch<MultiAssetsPattern> for MultiAssets {
 
 impl PatternMatch<WildMultiAssetPattern> for WildMultiAsset {
     fn matches(&self, pattern: &WildMultiAssetPattern) -> bool {
-        (
-            Self::AllOfCounted {
-                id,
-                fun,
-                count,
-            },
-            WildMultiAssetPattern::AllOfCounted {
-                id: id_pat,
-                fun: fun_pat,
-                count: count_pat
-            }
-        ) => id.matches(id_pat) && fun.matches(fun_pat) && count == count_pat,
-        (
-            Self::AllOf { id, fun },
-            WildMultiAssetPattern::AllOf { id: id_pat, fun: fun_pat }
-        ) => id.matches(id_pat) && fun.matches(fun_pat),
-        (Self::AllCounted(count), WildMultiAssetPattern::AllCounted(count_pat)) => count == count_pat,
-        (Self::All, WildMultiAssetPattern::All) => true,
-        _ => false,
-    }
-}
-
-impl PatternMatch<MultiAssetFilterPattern> for MultiAssetFilter {
-    fn matches(&self, pattern: &WildMultiAssetPattern) -> bool {
-        match (self, pattern) => {
-            (Self::Wild(wild), WildMultiAssetPattern::Wild(pattern)) => wild.matches(pattern),
-            (Self::Definite(assets), WildMultiAssetPattern::Collection(pattern)) => assets.0.matches(pattern),
+        match (self, pattern) {
+            (
+                Self::AllOfCounted {
+                    id,
+                    fun,
+                    count,
+                },
+                WildMultiAssetPattern::AllOfCounted {
+                    id: id_pat,
+                    fun: fun_pat,
+                    count: count_pat
+                }
+            ) => id.matches(id_pat) && fun.matches(fun_pat) && count == count_pat,
+            (
+                Self::AllOf { id, fun },
+                WildMultiAssetPattern::AllOf { id: id_pat, fun: fun_pat }
+            ) => id.matches(id_pat) && fun.matches(fun_pat),
+            (Self::AllCounted(count), WildMultiAssetPattern::AllCounted(count_pat)) => count == count_pat,
+            (Self::All, WildMultiAssetPattern::All) => true,
+            _ => false,
         }
     }
 }
 
-impl PatternMatch<NameMaxLen> for Vec<u8> {
-    fn matches(&self, pattern: &NameMaxLen) -> bool {
-        self.0.len() == pattern.0
+impl PatternMatch<MultiAssetFilterPattern> for MultiAssetFilter {
+    fn matches(&self, pattern: &MultiAssetFilterPattern) -> bool {
+        match (self, pattern) {
+            (Self::Definite(assets), MultiAssetFilterPattern::Collection(pattern)) => assets.matches(pattern),
+            (Self::Wild(wild), MultiAssetFilterPattern::Wild(pattern)) => wild.matches(pattern),
+            _ => false,
+        }
     }
 }
 
@@ -1037,17 +1034,7 @@ impl PatternMatch<ResponsePattern> for Response {
             (Self::Null, ResponsePattern::Null) => true,
             (Self::ExecutionResult(_), ResponsePattern::ExecutionResult) => true,
             (Self::Version(_), ResponsePattern::Version) => true,
-            (Self::PalletsInfo(infos), ResponsePattern::PalletsInfo(pattern)) => match pattern {
-                Specificity::Definite(patterns) => {
-                    infos.iter()
-                        .zip(patterns.iter())
-                        .all(|(info, pattern)| {
-                            info.name.matches(pattern.name_max_len)
-                            && info.module_name.matches(pattern.module_name_max_len)
-                        })
-                },
-                Specificity::Any => true,
-            },
+            (Self::PalletsInfo(infos), ResponsePattern::PalletsInfo(num)) => infos.len() == *num as usize,
             (Self::DispatchResult(_), ResponsePattern::DispatchResult) => true,
             (
                 Self::ExecutionInfoUpdate {
@@ -1060,8 +1047,15 @@ impl PatternMatch<ResponsePattern> for Response {
                     pattern_reports: pattern_reports_pat,
                 },
             ) => payment_methods.matches(payment_methods_pat)
-                && pattern_reports.matches(pattern_reports_pat)
+                && pattern_reports.matches(pattern_reports_pat),
+            _ => false,
         }
+    }
+}
+
+impl<Call> PatternMatch<XcmPattern<Call>> for Xcm<Call> {
+    fn matches(&self, pattern: &XcmPattern<Call>) -> bool {
+        self.0.matches(&pattern.0)
     }
 }
 
@@ -1083,7 +1077,7 @@ impl<C> PatternMatch<InstructionPattern<C>> for Instruction<C> {
             (
                 Self::QueryResponse { response, .. },
                 InstructionPattern::QueryResponse { response: respone_pat },
-            ) => response.matches(respone_pat)
+            ) => response.matches(respone_pat),
             (
                 Self::TransferAsset {
                     assets,
@@ -1114,21 +1108,21 @@ impl<C> PatternMatch<InstructionPattern<C>> for Instruction<C> {
                 },
                 InstructionPattern::Transact {
                     origin_kind: origin_kind_pat,
-                    require_weight_at_most: require_weight_at_most_pat
+                    require_weight_at_most: require_weight_at_most_pat,
                     call: call_pat,
                 },
             ) => origin_kind.matches(origin_kind_pat)
                 && require_weight_at_most.matches(require_weight_at_most_pat)
                 && call == call_pat,
-            (Self::HrmpNewChannelOpenRequest, InstructionPattern::HrmpNewChannelOpenRequest) => true,
-            (Self::HrmpChannelAccepted, InstructionPattern::HrmpChannelAccepted) => true,
-            (Self::HrmpChannelClosing, InstructionPattern::HrmpChannelClosing) => true,
+            (Self::HrmpNewChannelOpenRequest { .. }, InstructionPattern::HrmpNewChannelOpenRequest) => true,
+            (Self::HrmpChannelAccepted { .. }, InstructionPattern::HrmpChannelAccepted) => true,
+            (Self::HrmpChannelClosing { .. }, InstructionPattern::HrmpChannelClosing) => true,
             (Self::ClearOrigin, InstructionPattern::ClearOrigin) => true,
             (Self::DescendOrigin(_), InstructionPattern::DescendOrigin) => true,
             (
                 Self::ReportError(response_info),
-                InstructionPattern::ReportError { response_dest: response_dest_pat },
-            ) => response_info.destination.matches(response_dest_pat),
+                InstructionPattern::ReportError(pattern),
+            ) => response_info.destination.matches(pattern),
             (
                 Self::DepositAsset {
                     assets,
@@ -1215,12 +1209,12 @@ impl<C> PatternMatch<InstructionPattern<C>> for Instruction<C> {
                     assets,
                     ticket,
                 },
-                InstructionPattern::{
+                InstructionPattern::ClaimAsset{
                     assets: assets_pat,
                     ticket: ticket_pat,
                 }
             ) => assets.matches(assets_pat) && ticket.matches(ticket_pat),
-            (Self::Trap, InstructionPattern::Trap) => true,
+            (Self::Trap(_), InstructionPattern::Trap) => true,
             (Self::SubscribeVersion { .. }, InstructionPattern::SubscribeVersion) => true,
             (Self::UnsubscribeVersion, InstructionPattern::UnsubscribeVersion) => true,
             (Self::BurnAsset(assets), InstructionPattern::BurnAsset(pattern)) => assets.matches(pattern),
@@ -1229,31 +1223,18 @@ impl<C> PatternMatch<InstructionPattern<C>> for Instruction<C> {
             (Self::ExpectError(_), InstructionPattern::ExpectError) => true,
             (Self::ExpectTransactStatus(_), InstructionPattern::ExpectTransactStatus) => true,
             (
-                Self::QueryPallet {
-                    module_name,
-                    response_info,
-                },
+                Self::QueryPallet { response_info, .. },
                 InstructionPattern::QueryPallet {
-                    module_name: module_name_pat,
-                    response_dest: response_dest_pat,
+                    response_dest: response_dest_pat
                 },
-            ) => module_name.matches(module_name_pat) && response_info.destination.matches(response_dest),
+            ) => response_info.destination.matches(response_dest_pat),
             (
-                Self::ExpectPallet {
-                    name,
-                    module_name,
-                    ..
-                },
-                InstructionPattern::ExpectPallet {
-                    name: name_pat,
-                    module_name: module_name_pat,
-                },
-            ) => name.matches(name_pat) && module_name.matches(module_name_pat),
+                Self::ExpectPallet { .. },
+                InstructionPattern::ExpectPallet,
+            ) => true,
             (
                 Self::ReportTransactStatus(response_info),
-                InstructionPattern::ReportTransactStatus {
-                    response_dest: response_dest_pat,
-                },
+                InstructionPattern::ReportTransactStatus(response_dest_pat),
             ) => response_info.destination.matches(response_dest_pat),
             (Self::ClearTransactStatus, InstructionPattern::ClearTransactStatus) => true,
             (Self::UniversalOrigin(_), InstructionPattern::UniversalOrigin) => true,
