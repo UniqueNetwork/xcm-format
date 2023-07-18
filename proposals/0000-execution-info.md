@@ -20,13 +20,16 @@ This RFC proposes several enhancements to XCM:
 
 ## Motivation
 
-When sending an XCM program, the sender chain can't know beforehand the correct weight of the XCM program. And also, it can't know the currencies in which it can pay the fees and can't know the right amount of a suitable currency to execute the program.
-This leads to guessing: either the sender chain itself sets an arbitrary weight limit and fees in the `BuyExecution` command, or the user initiating the sending of an XCM program is forced to guess the correct values.
+Currently, when sending an XCM program, the sender chain can't know beforehand the correct weight of the XCM program. And also, it can't know the currencies in which it can pay the fees and can't know the right amount of a suitable currency to execute the program.
+This leads to a guessing problem. Currently, either the sender chain itself sets an arbitrary weight limit and fees in the `BuyExecution` command, or the user initiating the sending of an XCM program is forced to guess the correct values.
 
-This is generally okay for transferring fungible assets. However, it can become an issue in the following scenarios:
-* Transferring multiple currencies - one must choose one currency to pay execution fees. However, the amount of the selected currency could be small (i.e., the guess could be wrong), leading to trapping all the assets.
+This is generally okay for transferring fungible assets since when a user transfers only one currency, they may transfer a significant amount of it so that it would cover all possible execution fees. On the other hand, when transferring a small amount of currency, even if there were not enough assets to pay the execution fees (hence, the program will fail, and the assets will be trapped), the sender might not mind losing it since it is a small amount anyway.
+
+However, it can become an issue in the following scenarios:
+* Transferring multiple currencies - one must choose one currency to pay execution fees. However, the amount of the selected currency could be small (i.e., the guess could be wrong), leading to trapping all the assets. When the amount of another currency (not used for paying fees) is significant, this will become a problem for the sender.
 * Transferring NFTs - the same situation as with multiple currencies. One must choose a currency to pay fees since it is impossible to pay fees by an NFT.
-* General interoperability - since the sender chain can't know the exact weight of an XCM program and can't set the correct execution fees, creating a **reliable and convenient-to-use** cross-chain logic such as NFT metadata synchronization is impossible. E.g., one chain could provide access control logic for an NFT's attributes, and the other stores the NFT. Or there can be even more complex cross-chain logic not related to NFTs. The main obstacle here is guessing the correct weight/fee values.
+* General interoperability - since the sender chain can't know the exact weight of an XCM program and can't set the correct execution fees, creating a **reliable and convenient-to-use** cross-chain logic such as sending an NFT's attributes updates is impossible.
+An example of such a logic could be a chain providing access control logic for an NFT's attributes located on another chain. Or there can be even more complex cross-chain logic not related to NFTs. The main obstacle here is the guessing problem of the correct weight/fee values.
 
 This RFC proposes a possible way to solve this via new instructions and a new notion of an instruction pattern.
 
@@ -54,7 +57,7 @@ The specification uses the following terms:
 5. An **instruction pattern** is a pattern of an XCM instruction describing a set of the instruction's parameters' values.
     Each **instruction pattern** is unique and can be identified by its hash. Also, **instruction patterns** are ordered from more-specific to less-specific.
     See [the corresponding section](#instruction-pattern) for details.
-6. **Instruction pattern report** results from weighing a particular **instruction pattern** on the **response chain**. The pattern is identified by its hash. The pattern could be either valid or invalid. If it is valid, the result will carry the pattern's weight. If it is invalid, the result will carry an XCM error. 
+6. **Instruction pattern report** results from weighing a particular **instruction pattern** on the **response chain**. The **response chain** sends pattern reports to the **subscriber chain** to notify it about the result of weighing the corresponding pattern. The instruction pattern corresponding to the report is identified by its hash. The pattern could be either valid or invalid. If it is valid, the result will carry the pattern's weight. If it is invalid, the result will carry an XCM error. 
     ```rust
     #[derive(Encode, Decode, Clone, PartialEq, Eq, PartialOrd, Ord)]
     struct PatternReport {
@@ -67,17 +70,28 @@ The specification uses the following terms:
 
 #### Introduction
 
+To introduce the instruction patterns, let us have some observations regarding Weighers of XCM programs in the existing chains using XCM.
+
 Each chain supporting XCM has a Weigher for XCM programs. The Weigher takes a program as a parameter and computes the program's weight. It does that by calculating the weight of each program instruction and then adding those weights together.
 
 However, the Weigher usually considers only a subset of the instruction parameters. For instance, [Asset Hub's XCM Weigher](https://github.com/paritytech/cumulus/blob/26d725762c08b2b31fe40ae0ca0c16969f91ee2b/parachains/runtimes/assets/asset-hub-polkadot/src/weights/xcm/mod.rs#L53-L63) only accounts the number of assets in the `WithdrawAsset` instruction, but it doesn't care what assets are in the list. The Weigher can even ignore all instruction parameters and return the default weight as [Asset Hub's weighing implementation of the `ReportHolding` instruction](https://github.com/paritytech/cumulus/blob/26d725762c08b2b31fe40ae0ca0c16969f91ee2b/parachains/runtimes/assets/asset-hub-polkadot/src/weights/xcm/mod.rs#L119-L121). Nonetheless, the Weigher could consider all the instruction parameters or a different subset of the parameters. Also, the Weigher could utilize branching to compute the weight of some special cases depending on one or several parameters' values.
 
 Given that the Weigher (in general) considers a subset of the instruction's parameters, we can conclude that the Weigher computes the weight not for a particular instruction with definite parameters but for a predefined set of instructions. For instance, for the `WithdrawAsset` instruction, the Asset Hub's Weigher computes the weight for the set of instructions defined by the following pattern: `WithdrawAsset(vec![<any-multiasset>, ...])`.
 
-Except for Weighers, the patterns arise in inter-chain communication. Chains (usually) don't send unique-structured XCM programs. Instead, they send programs that can be grouped into several structure categories, e.g., reserve-based transfer programs. Also, chains don't use every XCM instruction. They use only those that appear in the said program categories. Since sender chains know what instruction patterns they will send, if they knew how to weigh the patterns according to the Weigher of the target chain, they could compute the correct weight of an entire XCM program before sending it.
+Except for Weighers, the patterns arise in inter-chain communication. Chains (usually) don't send unique-structured XCM programs. Instead, they send programs that can be grouped into several structure categories, e.g., reserve-based transfer programs. Also, chains don't use every XCM instruction. They use only those that appear in the said program categories. This means all instructions of any XCM program a sender chain will send match some predefined patterns.
+And since the sender chain constructs these programs (i.e., there is a code in the chain's runtime to do so), it already knows these patterns. The patterns are just not expressed explicitly.
 
-Since we can use patterns on both sides to know the correct weight of an XCM program, we could arrange weight info communication between chains if we could express these patterns. As such, this RFC proposes a way to express XCM instruction patterns and proposes new instructions to work with them.
+Since the sender chain knows what instruction patterns it will send, if it knew how to weigh the patterns according to the Weigher of the target chain, it could compute the correct weight of an entire XCM program before sending it. However, currently, there is no way to correctly weigh a program to be sent to another chain since the target chain has no means to tell the sender chain how to weigh XCM programs.
+
+Considering that we can use patterns on both sides (sender chain/target chain) to know the correct weight of an XCM program, we could arrange weight info communication between chains if we could express these patterns. The sender chain can explicitly express interest in particular instruction patterns. Then the target chain can weigh these patterns and send a response telling the sender chain the weight of the given instruction patterns. This way, the sender chain can correctly weigh any XCM program for the target chain consisting of instructions matching the said patterns.
+
+As such, this RFC proposes a way to express XCM instruction patterns and new instructions to work with them.
 
 #### Instruction pattern specification
+
+Instruction patterns can be expressed via an enum that follows the structure of the XCM `Instruction` enum. Each variant of an instruction pattern corresponds to an XCM instruction where each argument is either replaced by a corresponding helper pattern (such as `MultiAssetPattern`) or removed entirely. An instruction's argument in the corresponding pattern is removed only if this argument shouldn't affect the instruction's weight. For instance, if the instruction's argument has a well-defined small upper bound (like pallet names) or is just an integer constant, then this argument should produce a constant overhead, and its actual value shouldn't affect the instruction's weight. On the contrary, lists (like `MultiAssets`) can affect the weight since list elements will induce an extra overhead, thus affecting the instruction's weight. Multilocations also represented as helper `MultiLocationPattern` since its actual value could impact the weight, e.g., because of a different routing for different multilocations.
+
+Also, there is a special pattern - `Specificity`. If the weight upper bound could be defined for an instruction's argument, its pattern is wrapped into the `Specificity` pattern. It allows us to use the `Any` value instead of the argument's definite pattern, signifying that we are interested in the weight upper bound of this argument. See the example below for details.
 
 ```rust
 // Note: to disambiguate patterns, all lists (such as a vector inside the `MultiAssetsPattern`) must be sorted.
